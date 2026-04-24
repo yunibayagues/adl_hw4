@@ -1,8 +1,20 @@
-homework4_aug_4/data/
-homework4_aug_4/data/
-homework4_aug_4/data/
-adl_hw4/supertux_data.zip/
-homework4_aug_4/data/
-adl_hw4/supertux_data.zip/
-homework4_aug_4/data/
-*.zip
+# Python cache
+__pycache__/
+*.pyc
+
+# OS files
+.DS_Store
+
+# TensorBoard logs (safe to ignore)
+tensorboard/
+events.out.tfevents.*
+
+# Temporary / noise files
+*.log
+
+# Colab / notebook artifacts (optional)
+.ipynb_checkpoints/
+
+# DO NOT ignore trained model folders (IMPORTANT)
+# vlm_sft/  <-- KEEP THIS (do NOT ignore)
+# demo_train/ <-- keep if you want logs of experiments

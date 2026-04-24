@@ -22,7 +22,7 @@ class VQADataset:
         self.qa_pairs = []
 
         # Find all QA pair files for the split
-        qa_files = list(self.data_dir.glob(f"{split}/*_qa_pairs.json"))
+        qa_files = list(self.data_dir.glob(f"{split}/*qa_pairs.json"))
 
         for qa_file in qa_files:
             with open(qa_file) as f:

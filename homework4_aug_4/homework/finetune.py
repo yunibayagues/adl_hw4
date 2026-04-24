@@ -108,12 +108,12 @@ class VQADatasetForTraining(Dataset):
 
 
 def train(
-    data_dir: Path | None = None,
+    data_dir: str | None = None,
     train_dataset_name: str = "train",
     output_dir: str = "vlm_sft",
-    num_train_epochs: int = 0.05,  # use only 0.05 epoch for training
-    per_device_train_batch_size: int = 8,
-    gradient_accumulation_steps: int = 4,
+    num_train_epochs: int = 0.1,  # use only 0.05 epoch for training
+    per_device_train_batch_size: int = 26,
+    gradient_accumulation_steps: int = 2,
     learning_rate: float = 5e-4,
     lora_r: int = 8,
     lora_alpha: int = 32,
@@ -135,6 +135,7 @@ def train(
         lora_alpha: LoRA alpha
         lora_dropout: LoRA dropout
     """
+    data_dir = Path(data_dir)
     vlm = BaseVLM()
 
     # Create output directory
@@ -200,6 +201,7 @@ def train(
         args=training_args,
         train_dataset=train_dataset,
         data_collator=custom_data_collator,
+  
     )
 
     # Train the model

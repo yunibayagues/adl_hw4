@@ -9,6 +9,7 @@ from PIL import Image
 from torch.utils.data import Dataset
 from torch.utils.tensorboard import SummaryWriter
 from transformers import AutoProcessor, Trainer, TrainingArguments
+import torch.nn.functional as F
 
 from .base_vlm import BaseVLM
 from .data import CaptionDataset, MultiChoiceQADataset
@@ -101,14 +102,35 @@ class CLIP(nn.Module):
         super().__init__()
         self.vision_encoder = vision_encoder
         self.text_encoder = text_encoder
-        # TODO: implement the rest components
-        raise NotImplementedError("Not implemented")
+        vision_dim = vision_encoder.config.hidden_size
+        text_dim = text_encoder.config.hidden_size
 
-    def encode_image(self, image: torch.Tensor) -> torch.Tensor:
-        return self.vision_encoder(image)
+        self.image_proj = nn.Linear(vision_dim, proj_dim)
+        self.text_proj = nn.Linear(text_dim, proj_dim)
 
-    def encode_text(self, text: str) -> torch.Tensor:
-        return self.text_encoder(text)
+        #temperature
+        self.logit_scale = nn.Parameter(torch.log(torch.tensor(1 / temperature, dtype=torch.float32)))
+
+    def encode_image(self, pixel_values: torch.Tensor) -> torch.Tensor:
+        outputs = self.vision_encoder(pixel_values=pixel_values)
+
+        hidden = outputs.last_hidden_state  # (B, N_patches, D)
+
+        pooled = hidden.mean(dim=1)  # average across patches
+
+        return pooled
+
+    def encode_text(self, input_ids, attention_mask):
+        outputs = self.text_encoder(input_ids = input_ids, attention_mask = attention_mask)
+        hidden = outputs.last_hidden_state
+
+        #masked mean pooling
+        mask = attention_mask.unsqueeze(-1).float()
+        summed = (hidden * mask).sum(dim=1)
+        counts = mask.sum(dim=1).clamp(min=1e-6)
+        pooled = summed / counts
+
+        return pooled
 
     def save_pretrained(self, save_directory: str, **kwargs):
         """Customize save method, save additional parameters"""
@@ -180,7 +202,20 @@ class CLIP(nn.Module):
         Returns:
             TODO: think about the what values should be returned
         """
-        raise NotImplementedError("Not implemented")
+        #encode
+        image_feat = self.encode_image(pixel_values)
+        text_feat = self.encode_text(input_ids, attention_mask)
+
+        # FORCE dtype match
+        image_feat = image_feat.to(self.image_proj.weight.dtype)
+        text_feat = text_feat.to(self.text_proj.weight.dtype)
+
+        image_feat = F.normalize(self.image_proj(image_feat), dim=-1)
+        text_feat = F.normalize(self.text_proj(text_feat), dim=-1)
+        #temperature
+        logit_scale = self.logit_scale.exp().clamp(max=100)
+
+        return image_feat, text_feat, logit_scale
 
 
 def compute_clip_loss(
@@ -199,7 +234,23 @@ def compute_clip_loss(
     Returns:
         The loss for the CLIP model.
     """
-    raise NotImplementedError("Not implemented")
+
+    image_feat, text_feat, logit_scale = outputs
+
+    # similarity matrix
+    logits = logit_scale * (image_feat @ text_feat.T)  # (B, B)
+
+    # targets = diagonal
+    batch_size = image_feat.shape[0]
+    targets = torch.arange(batch_size, device=image_feat.device)
+
+    # two directions
+    loss_i = F.cross_entropy(logits, targets)
+    loss_t = F.cross_entropy(logits.T, targets)
+
+    loss = (loss_i + loss_t) / 2
+
+    return loss
 
 
 def get_target_modules_for_lora(model: nn.Module) -> list[str]:
@@ -219,10 +270,10 @@ def get_target_modules_for_lora(model: nn.Module) -> list[str]:
 def train(
     data_dir: Path | None = None,
     output_dir: str = "clip",
-    num_train_epochs: float = 0.05,  # for debugging purpose, increase this once the dry run works
-    per_device_train_batch_size: int = 1024,
-    gradient_accumulation_steps: int = 1,
-    learning_rate: float = 5e-4,
+    num_train_epochs: float = 1,  # for debugging purpose, increase this once the dry run works
+    per_device_train_batch_size: int = 256,
+    gradient_accumulation_steps: int = 4,
+    learning_rate: float = 5e-5,
     num_workers: int = 16,
 ):
     vlm = BaseVLM()
@@ -244,7 +295,7 @@ def train(
     peft_config = LoraConfig(
         task_type=TaskType.FEATURE_EXTRACTION,
         inference_mode=False,
-        r=8,
+        r=16,
         lora_alpha=32,
         lora_dropout=0.0,
         # target_modules="all-linear",
@@ -358,4 +409,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+  print('here')
+  main()

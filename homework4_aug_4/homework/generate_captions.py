@@ -16,6 +16,11 @@ def image_to_info_path(image_file: str):
 def extract_view_index(image_file: str):
     return int(Path(image_file).stem.split("_")[1])
 
+def sample_other_captions(captions: list[list[str]], bad_index: int) -> list[str]:
+    valid_indices = random.sample(range(len(captions) - 1), 4)
+    valid_indices = [x + 1 if x >= bad_index else x for x in valid_indices]
+    return [random.sample(captions[index], 1)[0] for index in valid_indices]
+
 def generate_caption(info_path: str, view_index: int, img_width: int = 150, img_height: int = 100) -> list:
     """
     Generate caption for a specific view.
@@ -94,6 +99,66 @@ def generate_caption(info_path: str, view_index: int, img_width: int = 150, img_
     # 4. Relative position
     # {kart_name} is {position} of the ego car.
 
+import random
+
+def generate_mcqa(info_file: str, view_index: int):
+    captions = generate_caption(info_file, view_index)
+
+    if len(captions) == 0:
+        return None
+
+    karts_to_select = ["tux", "gnu", "nolok", "sara", "wilber", "puffy", "pidgin", "godette", "amanda", "emule", "suzanne",
+                       "gavroche", "hexley", "xue", "konqi", "adiumy", "kiki", "pepper"]
+
+    tracks_to_select = [
+        "sandtrack",
+    "scotland",
+    "snowtuxpeak",
+    "black_forest",
+    "candela_city",
+    "cornfield_crossing",
+    "zengarden",
+    "cocoa_temple",
+    "gran_paradiso_island",
+    "fortmagma",
+    "overworld",
+    "abyss",
+    "lighthouse",
+    "olivermath",
+    "volcano_island",
+
+]
+
+    # pick a correct caption
+    correct_caption = random.choice(captions)
+
+    # create fake distractors
+    distractors = [
+        "The ego car is stationary.",
+        "There are 3 karts in the scene.",
+        "The track is unknown.",
+        "All karts are in front of the ego car.",
+        "No karts are behind the ego car.",
+        "The ego car is xue."
+    ]
+
+    # remove accidental match
+    distractors = [d for d in distractors if d != correct_caption]
+
+    # sample 4 distractors
+    distractors = random.sample(distractors, 4)
+
+    candidates = distractors + [correct_caption]
+    random.shuffle(candidates)
+
+    correct_index = candidates.index(correct_caption)
+
+    return {
+        "image_file": str(info_file).replace("_info.json", f"_{view_index:02d}_im.jpg"),
+        "candidates": candidates,
+        "correct_index": correct_index
+    }
+
 from pathlib import Path
 import json
 
@@ -105,6 +170,8 @@ def generate_all_train(data_dir: str = "data/train",
     info_files = sorted(data_dir.rglob("*_info.json"))
 
     all_outputs = []
+    correct_captions: list[tuple[str, int, str, int]] = []  # [image_file_path, view_index, caption, caption_list_index]
+    all_captions = []
 
     for info_file in info_files:
         # load metadata
@@ -115,12 +182,64 @@ def generate_all_train(data_dir: str = "data/train",
 
         for view_index in range(num_views):
             captions = generate_caption(str(info_file), view_index)
+            if not captions:
+                continue
 
-            all_outputs.append({
-                "info_file": str(info_file),
-                "view_index": view_index,
-                "captions": captions
-            })
+            view_index_string = "0" + str(view_index)
+            image_file_name = f"{info_file.as_posix()[5:-9]}{view_index_string}_im.jpg"
+
+            for correct_caption in captions:
+                all_outputs.append({"image_file": image_file_name, "caption": correct_caption})
+
+    # write output
+    output_file = Path(output_file)
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(output_file, "w") as f:
+        json.dump(all_outputs, f, indent=2)
+
+    print(f"Generated {len(all_outputs)} caption sets → {output_file}")
+
+def generate_all_train_multiple_choice(data_dir: str = "data/train",
+                       output_file: str = "data/train/all_captions.json"):
+
+    data_dir = Path(data_dir)
+
+    info_files = sorted(data_dir.rglob("*_info.json"))
+
+    all_outputs = []
+    correct_captions: list[tuple[str, int, str, int]] = []  # [image_file_path, view_index, caption, caption_list_index]
+    all_captions = []
+
+    for info_file in info_files:
+        # load metadata
+        with open(info_file, "r") as f:
+            info = json.load(f)
+
+        num_views = len(info["detections"])
+
+        for view_index in range(num_views):
+            captions = generate_caption(str(info_file), view_index)
+            if not captions:
+                continue
+
+            image_file_name = f"{info_file.as_posix()[:-9]}{view_index}_im.jpg"
+            caption_list_index = len(all_captions)
+            all_captions.append(captions)
+            for correct_caption in captions:
+                correct_captions.append((image_file_name, view_index, correct_caption, caption_list_index))
+
+    for example in correct_captions:
+        image_file_name, view_index, correct_caption, caption_list_index = example
+        incorrect_captions = sample_other_captions(all_captions, caption_list_index)
+        example_captions = incorrect_captions + [correct_caption]
+        random.shuffle(example_captions)
+
+        all_outputs.append({
+            "image_file": image_file_name,
+            "candidates": example_captions,
+            "correct_index": example_captions.index(correct_caption)
+        })
 
     # write output
     output_file = Path(output_file)
